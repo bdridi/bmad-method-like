@@ -33,6 +33,11 @@ GITIGNORE_LINES = ("_bmad/render/", "*.user.toml", "skills-lock.json")
 SEMVER_REF = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 GITHUB_SLUG = re.compile(r"github\.com[:/](?P<slug>[^/]+/[^/]+?)(?:\.git)?/?(?:#|$)")
 RESOLVED_SHA = re.compile(r"#(?P<sha>[0-9a-f]{40})$")
+TELEMETRY_SOURCE = REPO_ROOT / "init" / "telemetry"
+TELEMETRY_DIR = Path("_bmad/telemetry")
+TELEMETRY_FILES = ("receiver.py", "report.py", "queries.sql")
+TELEMETRY_PORT = 4318
+SETTINGS_FILE = Path(".claude/settings.json")
 PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 
 
@@ -52,6 +57,7 @@ class Profile(NamedTuple):
     skills: tuple[str, ...]
     answers: dict[tuple[str, str], str]
     custom: dict[str, Path]
+    telemetry: bool = True
 
 
 Installer = Callable[[Path, Path, str, list[str]], None]
@@ -168,7 +174,7 @@ def load_profile(name: str, profiles: Path = REPO_ROOT / "profiles") -> Profile:
         (module, key): value for module, values in raw.get("modules", {}).items() for key, value in flatten(values)
     }
     custom = {p.name: p for p in sorted((folder / "custom").glob("*.toml"))} if (folder / "custom").is_dir() else {}
-    return Profile(name, data.get("agent"), tuple(skills), answers, custom)
+    return Profile(name, data.get("agent"), tuple(skills), answers, custom, data.get("telemetry", True) is True)
 
 
 def flatten(values: dict, prefix: str = "") -> list[tuple[str, str]]:
@@ -292,6 +298,52 @@ def ensure_gitignore(project: Path, lines: tuple[str, ...] = GITIGNORE_LINES) ->
     return missing
 
 
+def telemetry_settings(port: int = TELEMETRY_PORT) -> tuple[dict[str, str], dict]:
+    """The env that makes Claude Code export OTLP to the local receiver, and the hook that keeps the receiver running."""
+    env = {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{port}",
+        "OTEL_METRIC_EXPORT_INTERVAL": "10000",
+        "OTEL_LOG_TOOL_DETAILS": "1",  # without it skill names are masked as "custom_skill"
+    }
+    command = (
+        f'uv run --script "$CLAUDE_PROJECT_DIR/{TELEMETRY_DIR.as_posix()}/receiver.py" '
+        f'ensure --logs "$CLAUDE_PROJECT_DIR/.logs" --port {port}'
+    )
+    return env, {"hooks": [{"type": "command", "command": command}]}
+
+
+def install_telemetry(project: Path, refresh: bool, port: int = TELEMETRY_PORT) -> list[str]:
+    """Deposit the receiver and report tools and wire them into .claude/settings.json. Existing settings win."""
+    done = []
+    target = project / TELEMETRY_DIR
+    for name in TELEMETRY_FILES:
+        if refresh or not (target / name).exists():
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(TELEMETRY_SOURCE / name, target / name)
+            done.append(f"{TELEMETRY_DIR.as_posix()}/{name}")
+    path = project / SETTINGS_FILE
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except ValueError as error:
+        raise InitError(f"{SETTINGS_FILE.as_posix()} is not valid JSON: {error}") from error
+    env, hook = telemetry_settings(port)
+    before = json.dumps(settings, sort_keys=True)
+    for key, value in env.items():
+        settings.setdefault("env", {}).setdefault(key, value)
+    groups = settings.setdefault("hooks", {}).setdefault("SessionStart", [])
+    if not any("telemetry/receiver.py" in h.get("command", "") for g in groups for h in g.get("hooks", [])):
+        groups.append(hook)
+    if json.dumps(settings, sort_keys=True) != before:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        done.append(SETTINGS_FILE.as_posix())
+    return done
+
+
 class Report(NamedTuple):
     mode: str
     version: Version
@@ -303,6 +355,7 @@ class Report(NamedTuple):
     gitignore_added: list[str]
     warnings: list[str]
     check: dict
+    telemetry: list[str] = []
 
 
 def run_init(
@@ -361,6 +414,9 @@ def run_init(
                 custom_written.append(name)
     pin_written = write_pin(project, version) if mode != "join" else False
     gitignore_added = ensure_gitignore(project)
+    telemetry = (
+        install_telemetry(project, refresh=mode != "join") if profile.telemetry and agent == "claude-code" else []
+    )
     check = call_setup(project, "--status")
     return Report(
         mode,
@@ -373,6 +429,7 @@ def run_init(
         gitignore_added,
         warnings,
         check,
+        telemetry,
     )
 
 
@@ -390,6 +447,8 @@ def format_report(report: Report) -> str:
         lines.append(f"version pinned in {PIN_FILE.as_posix()}")
     if report.gitignore_added:
         lines.append(".gitignore: added " + ", ".join(report.gitignore_added))
+    if report.telemetry:
+        lines.append("telemetry set up: " + ", ".join(report.telemetry))
     for key in ("problems", "retired_skills", "custom_not_renamed", "custom_unused", "unmet_requirements"):
         if check.get(key):
             lines.append(f"{key}: {json.dumps(check[key], ensure_ascii=False)}")

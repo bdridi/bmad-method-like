@@ -54,9 +54,30 @@ A profile is a folder under `profiles/` and needs no code:
 | --- | --- |
 | `profile.toml` | `skills`, the list to install (it must include `bmad`), and `agent`, the default coding tool. |
 | `answers.toml` | Answers to module config questions, in the `[modules."<code>"]` format that `setup.py` reads. Optional. |
+| `telemetry` | Claude Code telemetry in the repo (see below). On unless set to `false`, and only for `agent = "claude-code"`. |
 | `custom/*.toml` | Team overrides copied to `_bmad/custom/` when the runtime is first created. See [Adopt BMad Across a Team](../docs/customize/adopt-bmad-across-a-team.md). |
 
+## Collect Skill Calls and Usage
+
+Every profile for Claude Code makes Claude Code export its native OpenTelemetry data to a small local receiver, unless it sets `telemetry = false`. The receiver writes it under `.logs/<session-id>/`:
+
+- `events.jsonl`: one line per event, including `claude_code.skill_activated` (the skill, and whether the user, Claude, or another skill triggered it) and `claude_code.tool_result`.
+- `metrics.jsonl`: one line per data point (cost, tokens, ...). Counters are deltas, so sum them.
+
+`init` copies the receiver and report tools to `_bmad/telemetry/` and adds the `OTEL_*` variables and a `SessionStart` hook to `.claude/settings.json`, keeping any value already there. The hook starts the receiver on `127.0.0.1:4318` when none is listening; it stops after an hour without traffic.
+
+`.logs/` is not ignored, so it can be committed. It holds skill names, tool names, and token and cost figures, not prompts (`OTEL_LOG_USER_PROMPTS` stays off).
+
+Query it with DuckDB:
+
+```bash
+uv run _bmad/telemetry/report.py                       # skills, cost, tokens and tools per session
+uv run _bmad/telemetry/report.py "select * from skill_calls"
+```
+
 ## Known Limits
+
+- Telemetry needs one receiver per port: two repos open at once share port 4318, and the second one's data lands in the first one's `.logs/`.
 
 - Git and GitHub must be reachable from the machine, and so must the npm registry for the Skills CLI. Nothing works offline.
 - `init` does not run module migrations. They need your approval of a plan, so run them through the `bmad` skill.
