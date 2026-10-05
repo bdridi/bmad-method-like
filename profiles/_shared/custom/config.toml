@@ -1,0 +1,5 @@
+# Team config for every profile, copied to _bmad/custom/config.toml when the runtime is first created.
+# A profile can replace it by shipping its own custom/config.toml.
+
+[core]
+output_folder = "{project-root}/_knowledge"
