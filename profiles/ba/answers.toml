@@ -1,0 +1,5 @@
+# Answers to module config questions, in the format setup.py reads. A question with no answer here
+# falls back to the module's default; a question with neither stops init. None are declared today.
+#
+# [modules."method"]
+# "some_key" = "some answer"
