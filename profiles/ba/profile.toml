@@ -1,0 +1,13 @@
+description = "Business analyst: brainstorm, brief, specify."
+agent = "claude-code"
+skills = [
+  "bmad",
+  "bmod-core-tools",
+  "bmod-method",
+  "bmad-agent-analyst",
+  "bmad-brainstorming",
+  "bmad-product-brief",
+  "bmad-prd",
+  "bmad-project-context",
+  "bmad-review",
+]

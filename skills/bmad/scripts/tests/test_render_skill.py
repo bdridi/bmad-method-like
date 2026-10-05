@@ -200,7 +200,7 @@ class RenderSkillTests(unittest.TestCase):
         self.assertIsNone(COMPILE_TOKEN.search(markdown), markdown)
         self.assertNotIn("{skill-root}", markdown)
         if skill_name != "bmad-retrospective":
-            artifacts = (project.resolve() / "_bmad-output").as_posix()
+            artifacts = (project.resolve() / "_knowledge").as_posix()
             self.assertIn(artifacts, markdown)
         return snap
 
@@ -723,7 +723,7 @@ class RenderSkillTests(unittest.TestCase):
     def test_missing_wrong_type_and_non_string_layer_id_halt(self):
         template = _team_config(Path("project"))
         missing = template.replace(
-            'output_folder = "{project-root}/_bmad-output"\n',
+            'output_folder = "{project-root}/_knowledge"\n',
             "",
         )
         ws = self._workspace(config=missing)
@@ -732,7 +732,7 @@ class RenderSkillTests(unittest.TestCase):
         self.assertIn("missing config value", result.stdout)
 
         wrong = template.replace(
-            'output_folder = "{project-root}/_bmad-output"',
+            'output_folder = "{project-root}/_knowledge"',
             "output_folder = 42",
         )
         ws = self._workspace(config=wrong)
