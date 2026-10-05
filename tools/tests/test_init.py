@@ -316,15 +316,6 @@ class RunInitTest(unittest.TestCase):
         self.assertTrue({"_bmad/render/", "*.user.toml"} <= set(ignored))
         self.assertTrue(report.check["current"], report.check)
 
-    def test_the_default_output_folder_is_removed_when_the_team_config_moves_it(self):
-        custom = write(self.temp / "cfg" / "config.toml", '[core]\noutput_folder = "{project-root}/_knowledge"\n')
-        profile = self.profile(custom={"config.toml": custom})
-        self.run_init(self.project, self.v1, profile=profile)
-        self.assertFalse((self.project / "_bmad-output").exists())
-        self.run_init(self.project, self.v1, profile=profile)
-        self.assertFalse((self.project / "_bmad-output").exists())
-        self.assertEqual(init.read_pin(self.project), self.v1)
-
     def test_a_question_with_no_answer_and_no_default_stops_before_anything_is_written(self):
         with self.assertRaisesRegex(init.InitError, r"extra\.site"):
             self.run_init(self.project, self.v1, profile=self.profile(answers={}))

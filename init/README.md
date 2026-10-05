@@ -54,7 +54,7 @@ A profile is a folder under `profiles/` and needs no code:
 | --- | --- |
 | `profile.toml` | `skills`, the list to install (it must include `bmad`), and `agent`, the default coding tool. |
 | `answers.toml` | Answers to module config questions, in the `[modules."<code>"]` format that `setup.py` reads. Optional. |
-| `custom/*.toml` | Team overrides copied to `_bmad/custom/` when the runtime is first created. Files in `profiles/_shared/custom/` go to every profile, and a profile's file of the same name replaces them. The shared `config.toml` sets the output folder to `_knowledge`. See [Adopt BMad Across a Team](../docs/customize/adopt-bmad-across-a-team.md). |
+| `custom/*.toml` | Team overrides copied to `_bmad/custom/` when the runtime is first created. Files in `profiles/_shared/custom/` go to every profile, and a profile's file of the same name replaces them. The shared `config.toml` sets the output folder to `_knowledge`; `setup.py` still creates an empty `_bmad-output`, which Git ignores. See [Adopt BMad Across a Team](../docs/customize/adopt-bmad-across-a-team.md). |
 
 ## Known Limits
 

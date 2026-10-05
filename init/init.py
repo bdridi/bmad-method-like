@@ -29,7 +29,6 @@ SKILLS_CLI = "skills@1.4.6"
 PIN_FILE = Path("_bmad/custom/config.toml")
 PIN_TABLE = "harness"
 SHARED_PROFILE = "_shared"
-DEFAULT_OUTPUT = "_bmad-output"
 # skills-lock.json records the checkout's path on this machine, which must not be committed.
 GITIGNORE_LINES = ("_bmad/render/", "*.user.toml", "skills-lock.json")
 SEMVER_REF = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
@@ -281,18 +280,6 @@ def call_setup(project: Path, *flags: str | Path) -> object:
     return json.loads(result.stdout)
 
 
-def drop_unused_default_output(project: Path) -> None:
-    """setup.py always creates the default output folder; remove it when the team config moved the output elsewhere."""
-    path = project / PIN_FILE
-    config = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    folder = str(config.get("core", {}).get("output_folder", "")).removeprefix("{project-root}/")
-    if folder and folder != DEFAULT_OUTPUT:
-        try:
-            (project / DEFAULT_OUTPUT).rmdir()
-        except OSError:
-            pass  # absent or not empty: leave it
-
-
 def ensure_gitignore(project: Path, lines: tuple[str, ...] = GITIGNORE_LINES) -> list[str]:
     path = project / ".gitignore"
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
@@ -377,7 +364,6 @@ def run_init(
                 shutil.copyfile(source, custom / name)
                 custom_written.append(name)
     pin_written = write_pin(project, version) if mode != "join" else False
-    drop_unused_default_output(project)
     gitignore_added = ensure_gitignore(project)
     check = call_setup(project, "--status")
     return Report(
