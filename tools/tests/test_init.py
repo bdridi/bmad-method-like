@@ -176,7 +176,7 @@ class GitignoreTest(unittest.TestCase):
 
 class ProfileTest(unittest.TestCase):
     def test_every_shipped_profile_loads_and_lists_skills_that_exist(self):
-        profiles = sorted(p.parent.name for p in (REPO_ROOT / "profiles").glob("*/profile.toml"))
+        profiles = sorted(p.name for p in (REPO_ROOT / "profiles").iterdir() if p.is_dir())
         self.assertGreaterEqual(len(profiles), 2)
         for name in profiles:
             profile = init.load_profile(name)
@@ -196,21 +196,6 @@ class ProfileTest(unittest.TestCase):
             self.assertEqual(profile.agent, "tool")
             self.assertEqual(profile.answers, {("m", "a.b"): "1", ("m", "c.d"): "2"})
             self.assertEqual(list(profile.custom), ["x.toml"])
-
-    def test_shared_custom_files_reach_every_profile_and_a_profile_file_replaces_one_of_the_same_name(self):
-        with tempfile.TemporaryDirectory() as temp:
-            profiles = Path(temp)
-            write(profiles / "_shared" / "custom" / "config.toml", "shared\n")
-            write(profiles / "_shared" / "custom" / "other.toml", "shared\n")
-            write(profiles / "qa" / "profile.toml", 'skills = ["bmad"]\n')
-            write(profiles / "qb" / "profile.toml", 'skills = ["bmad"]\n')
-            write(profiles / "qb" / "custom" / "config.toml", "own\n")
-            qa, qb = init.load_profile("qa", profiles), init.load_profile("qb", profiles)
-            self.assertEqual(sorted(qa.custom), ["config.toml", "other.toml"])
-            self.assertEqual(qb.custom["config.toml"].read_text(encoding="utf-8"), "own\n")
-            self.assertEqual(qb.custom["other.toml"].read_text(encoding="utf-8"), "shared\n")
-            with self.assertRaises(init.InitError):
-                init.load_profile("_shared", profiles)
 
     def test_bad_profiles_are_errors_that_name_the_problem(self):
         with tempfile.TemporaryDirectory() as temp:

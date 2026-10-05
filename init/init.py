@@ -28,7 +28,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_CLI = "skills@1.4.6"
 PIN_FILE = Path("_bmad/custom/config.toml")
 PIN_TABLE = "harness"
-SHARED_PROFILE = "_shared"
 # skills-lock.json records the checkout's path on this machine, which must not be committed.
 GITIGNORE_LINES = ("_bmad/render/", "*.user.toml", "skills-lock.json")
 SEMVER_REF = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
@@ -168,10 +167,7 @@ def load_profile(name: str, profiles: Path = REPO_ROOT / "profiles") -> Profile:
     answers = {
         (module, key): value for module, values in raw.get("modules", {}).items() for key, value in flatten(values)
     }
-    # profiles/_shared/custom holds the team config every profile gets; a profile's file of the same name replaces it.
-    custom: dict[str, Path] = {}
-    for source in (profiles / SHARED_PROFILE / "custom", folder / "custom"):
-        custom.update({p.name: p for p in sorted(source.glob("*.toml"))})
+    custom = {p.name: p for p in sorted((folder / "custom").glob("*.toml"))} if (folder / "custom").is_dir() else {}
     return Profile(name, data.get("agent"), tuple(skills), answers, custom)
 
 
