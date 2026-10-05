@@ -1,0 +1,20 @@
+{
+  "name": "lke",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Prepares a working repo for a profile (BA, PO, ...) from a Git ref, with no registry. Compatible with BMad Method; not an official BMad product.",
+  "license": "MIT",
+  "bin": {
+    "lke": "init/launch.js"
+  },
+  "files": [
+    "init",
+    "profiles",
+    "skills",
+    "LICENSE",
+    "TRADEMARK.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
