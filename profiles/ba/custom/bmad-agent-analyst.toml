@@ -1,7 +1,0 @@
-# Team customization for the analyst agent. Committed, so every analyst inherits it.
-
-[agent]
-
-persistent_facts = [
-  "State every requirement as a testable acceptance criterion, and record anything ambiguous as an open question instead of assuming an answer.",
-]

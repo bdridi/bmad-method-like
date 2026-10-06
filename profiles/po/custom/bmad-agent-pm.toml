@@ -1,7 +1,0 @@
-# Team customization for the product manager agent. Committed, so every product owner inherits it.
-
-[agent]
-
-persistent_facts = [
-  "Rank every backlog item by user value and name what is deliberately left out of scope.",
-]

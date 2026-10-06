@@ -2,10 +2,10 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Prepare a working repo for a profile: install its skills, create `_bmad` with setup.py, deposit the team config.
+"""Prepare a working repo for the Agentic Factory harness: install its skills, set up `_bmad`, sync the team config.
 
 Runs from the checkout that npx fetched, so that checkout is both the installer and the source of the skills:
-the version it is on is the version that gets installed and pinned in the working repo.
+the version it is on is the version that gets installed and recorded in the working repo.
 """
 
 from __future__ import annotations
@@ -17,8 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -26,14 +25,34 @@ sys.dont_write_bytecode = True
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_CLI = "skills@1.4.6"
-PIN_FILE = Path("_bmad/custom/config.toml")
-PIN_TABLE = "harness"
+DEFAULT_AGENT = "claude-code"
+# The skills every working repo gets: the harness is one product, not one set per role.
+SKILLS = (
+    "bmad",
+    "bmod-core-tools",
+    "bmod-method",
+    "bmad-agent-analyst",
+    "bmad-agent-pm",
+    "bmad-brainstorming",
+    "bmad-product-brief",
+    "bmad-prd",
+    "bmad-spec",
+    "bmad-project-context",
+    "bmad-review",
+    "bmad-ticket",
+)
+CONFIG_SOURCE = REPO_ROOT / "agf" / "config"
+# _agf holds the team config of the working repo. init copies it into _bmad/custom, so _bmad never carries
+# configuration of its own. _agf/custom.toml becomes _bmad/custom/config.toml, the other files keep their name.
+CONFIG_DIR = Path("_agf")
+CONFIG_FILE = CONFIG_DIR / "custom.toml"
+LOGS_DIR = CONFIG_DIR / "logs"
+CUSTOM_DIR = Path("_bmad/custom")
+HARNESS_TABLE = "harness"
 # skills-lock.json records the checkout's path on this machine, which must not be committed.
 GITIGNORE_LINES = ("_bmad/render/", "*.user.toml", "skills-lock.json")
-SEMVER_REF = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 GITHUB_SLUG = re.compile(r"github\.com[:/](?P<slug>[^/]+/[^/]+?)(?:\.git)?/?(?:#|$)")
 RESOLVED_SHA = re.compile(r"#(?P<sha>[0-9a-f]{40})$")
-PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 
 
 class InitError(Exception):
@@ -44,14 +63,6 @@ class Version(NamedTuple):
     source: str | None  # "owner/repo" on GitHub, None when the origin is not a GitHub URL
     ref: str | None  # the tag, branch or commit the user asked for; None on the default branch
     sha: str
-
-
-class Profile(NamedTuple):
-    name: str
-    agent: str | None
-    skills: tuple[str, ...]
-    answers: dict[tuple[str, str], str]
-    custom: dict[str, Path]
 
 
 Installer = Callable[[Path, Path, str, list[str]], None]
@@ -101,39 +112,13 @@ def version_label(version: Version) -> str:
     return f"{version.ref} ({version.sha[:12]})" if version.ref else version.sha[:12]
 
 
-def compare_versions(current: Version, pinned: Version) -> str:
-    """same, newer, older, or changed when the two cannot be ordered (a commit has no order)."""
-    if current.sha == pinned.sha:
-        return "same"
-    now, then = (SEMVER_REF.match(v.ref or "") for v in (current, pinned))
-    if now is None or then is None:
-        return "changed"
-    order = (tuple(map(int, now.groups())) > tuple(map(int, then.groups()))) - (
-        tuple(map(int, now.groups())) < tuple(map(int, then.groups()))
-    )
-    return {1: "newer", -1: "older", 0: "changed"}[order]
-
-
-def read_pin(project: Path) -> Version | None:
-    path = project / PIN_FILE
-    if not path.is_file():
-        return None
-    try:
-        table = tomllib.loads(path.read_text(encoding="utf-8")).get(PIN_TABLE)
-    except tomllib.TOMLDecodeError as error:
-        raise InitError(f"{PIN_FILE.as_posix()} is not valid TOML: {error}") from error
-    if not isinstance(table, dict) or not isinstance(table.get("sha"), str):
-        return None
-    return Version(table.get("source"), table.get("ref"), table["sha"])
-
-
-def write_pin(project: Path, version: Version) -> bool:
-    """Set the [harness] table of the team config, leaving every other line as it is. True when the file changed."""
-    path = project / PIN_FILE
+def write_version(project: Path, version: Version) -> bool:
+    """Set the [harness] table of _agf/custom.toml, leaving every other line as it is. True when the file changed."""
+    path = project / CONFIG_FILE
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     fields = {"source": version.source, "ref": version.ref, "sha": version.sha}
-    block = f"[{PIN_TABLE}]\n" + "".join(f"{key} = {json.dumps(value)}\n" for key, value in fields.items() if value)
-    section = re.compile(rf"^\[{PIN_TABLE}\]\n(?:[^\[\n].*\n?)*", re.MULTILINE)
+    block = f"[{HARNESS_TABLE}]\n" + "".join(f"{key} = {json.dumps(value)}\n" for key, value in fields.items() if value)
+    section = re.compile(rf"^\[{HARNESS_TABLE}\]\n(?:[^\[\n].*\n?)*", re.MULTILINE)
     if section.search(text):
         updated = section.sub(lambda _: block, text, count=1)
     else:
@@ -145,58 +130,21 @@ def write_pin(project: Path, version: Version) -> bool:
     return True
 
 
-# --- Profile ---------------------------------------------------------------------------------------------------
+# --- Answers ---------------------------------------------------------------------------------------------------
 
 
-def load_profile(name: str, profiles: Path = REPO_ROOT / "profiles") -> Profile:
-    folder = profiles / name
-    if not PROFILE_NAME.match(name) or not (folder / "profile.toml").is_file():
-        available = (
-            sorted(p.name for p in profiles.iterdir() if (p / "profile.toml").is_file()) if profiles.is_dir() else []
-        )
-        raise InitError(f"unknown profile {name!r}; available: {', '.join(available) or 'none'}")
-    try:
-        data = tomllib.loads((folder / "profile.toml").read_text(encoding="utf-8"))
-        answers_file = folder / "answers.toml"
-        raw = tomllib.loads(answers_file.read_text(encoding="utf-8")) if answers_file.is_file() else {}
-    except tomllib.TOMLDecodeError as error:
-        raise InitError(f"profile {name!r}: {error}") from error
-    skills = data.get("skills")
-    if not isinstance(skills, list) or not all(isinstance(s, str) for s in skills) or "bmad" not in skills:
-        raise InitError(f"profile {name!r}: 'skills' must be a list of names that includes 'bmad'")
-    answers = {
-        (module, key): value for module, values in raw.get("modules", {}).items() for key, value in flatten(values)
-    }
-    custom = {p.name: p for p in sorted((folder / "custom").glob("*.toml"))} if (folder / "custom").is_dir() else {}
-    return Profile(name, data.get("agent"), tuple(skills), answers, custom)
-
-
-def flatten(values: dict, prefix: str = "") -> list[tuple[str, str]]:
-    """Answers keyed by dotted path, as setup.py names them: nested tables become dotted keys."""
-    flat: list[tuple[str, str]] = []
-    for key, value in values.items():
-        if isinstance(value, dict):
-            flat += flatten(value, f"{prefix}{key}.")
-        else:
-            flat.append((f"{prefix}{key}", value))
-    return flat
-
-
-def resolve_answers(questions: list[dict], profile: Profile) -> dict[str, dict[str, str]]:
-    """One answer per pending question: the profile's, else the question's default. Neither is an error."""
+def resolve_answers(questions: list[dict]) -> dict[str, dict[str, str]]:
+    """One answer per pending question: the question's default. A question with none is an error."""
     answers: dict[str, dict[str, str]] = {}
     unanswered = []
     for question in questions:
         module, key = question["module"], question["key"]
-        value = profile.answers.get((module, key), question["default"])
-        if value == "":
+        if question["default"] == "":
             unanswered.append(f"{module}.{key} ({question['prompt']})")
         else:
-            answers.setdefault(module, {})[key] = value
+            answers.setdefault(module, {})[key] = question["default"]
     if unanswered:
-        raise InitError(
-            f"profile {profile.name!r} has no answer and the module has no default for: " + "; ".join(unanswered)
-        )
+        raise InitError("the module has no default for: " + "; ".join(unanswered))
     return answers
 
 
@@ -292,58 +240,68 @@ def ensure_gitignore(project: Path, lines: tuple[str, ...] = GITIGNORE_LINES) ->
     return missing
 
 
+def seed_config(project: Path, source: Path) -> list[str]:
+    """Copy the harness defaults into _agf. A file the team already has is theirs and is left alone."""
+    added = []
+    for file in sorted(source.glob("*.toml")):
+        target = project / CONFIG_DIR / file.name
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(file, target)
+            added.append(file.name)
+    return added
+
+
+def sync_custom(project: Path) -> list[str]:
+    """Copy _agf into _bmad/custom, replacing what is there. Files _agf does not have, such as *.user.toml, stay."""
+    changed = []
+    for file in sorted((project / CONFIG_DIR).glob("*.toml")):
+        target = project / CUSTOM_DIR / ("config.toml" if file.name == "custom.toml" else file.name)
+        content = file.read_bytes()
+        if not target.is_file() or target.read_bytes() != content:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            changed.append(target.name)
+    return changed
+
+
 class Report(NamedTuple):
-    mode: str
     version: Version
     installed: list[str]
     setup_status: str
     answers_added: list[str]
-    custom_written: list[str]
-    pin_written: bool
+    config_seeded: list[str]
+    version_written: bool
+    custom_synced: list[str]
     gitignore_added: list[str]
     warnings: list[str]
     check: dict
 
 
 def run_init(
-    project: Path, profile: Profile, agent: str, version: Version, installer: Installer = npx_install
+    project: Path,
+    agent: str,
+    version: Version,
+    installer: Installer = npx_install,
+    skills: Sequence[str] = SKILLS,
+    config: Path = CONFIG_SOURCE,
 ) -> Report:
-    pin = read_pin(project)
     warnings = []
     if version.ref is None:
         warnings.append(
             f"no tag or commit was given, so init ran on the default branch at {version.sha[:12]}. "
-            "Pin it: npx github:<owner>/<repo>#<tag-or-sha> init ..."
+            "Pin it: npx github:<owner>/<repo>#<tag-or-sha> init"
         )
-    if not (project / "_bmad").exists():
-        mode = "create"
-    elif pin is None:
-        mode = "join"
-        warnings.append(
-            f"{PIN_FILE.as_posix()} has no [{PIN_TABLE}] pin, so the version is not checked against the team's."
-        )
-    else:
-        relation = compare_versions(version, pin)
-        if relation == "older":
-            hint = f"npx github:{pin.source or '<owner>/<repo>'}#{pin.ref or pin.sha} init --profile {profile.name}"
-            raise InitError(
-                f"the team config pins {version_label(pin)}, newer than this run ({version_label(version)}). "
-                f"Rerun with the pinned version:\n  {hint}"
-            )
-        mode = "join" if relation == "same" else "update"
-
-    wanted = list(profile.skills)
-    to_install = wanted if mode != "join" else [skill for skill in wanted if skill not in present_skills(project)]
-    if to_install:
-        installer(project, REPO_ROOT, agent, to_install)
-    absent = [skill for skill in wanted if skill not in present_skills(project)]
+    installer(project, REPO_ROOT, agent, list(skills))
+    present = present_skills(project)
+    absent = [skill for skill in skills if skill not in present]
     if absent:
         raise InitError(f"skills missing after installation: {', '.join(absent)}")
 
     questions = call_setup(project, "--list-config-questions")
     if not isinstance(questions, list):
         raise InitError(f"unexpected answer to --list-config-questions: {questions}")
-    answers = resolve_answers(questions, profile)
+    answers = resolve_answers(questions)
     with tempfile.TemporaryDirectory() as scratch:
         flags: list[str | Path] = []
         if answers:
@@ -352,24 +310,20 @@ def run_init(
             flags = ["--module-answers", answers_file]
         setup = call_setup(project, *flags)
 
-    custom_written = []
-    if mode == "create":
-        custom = project / "_bmad" / "custom"
-        for name, source in profile.custom.items():
-            if not (custom / name).exists():
-                shutil.copyfile(source, custom / name)
-                custom_written.append(name)
-    pin_written = write_pin(project, version) if mode != "join" else False
+    (project / LOGS_DIR).mkdir(parents=True, exist_ok=True)
+    config_seeded = seed_config(project, config)
+    version_written = write_version(project, version)
+    custom_synced = sync_custom(project)
     gitignore_added = ensure_gitignore(project)
     check = call_setup(project, "--status")
     return Report(
-        mode,
         version,
-        to_install,
+        list(skills),
         setup["status"],
         [f"{a['module']}.{a['key']}" for a in setup["answers_added"]],
-        custom_written,
-        pin_written,
+        config_seeded,
+        version_written,
+        custom_synced,
         gitignore_added,
         warnings,
         check,
@@ -378,16 +332,18 @@ def run_init(
 
 def format_report(report: Report) -> str:
     check = report.check
-    lines = [f"init: {report.mode} ({version_label(report.version)})"]
+    lines = [f"init: {version_label(report.version)}"]
     lines += [f"warning: {warning}" for warning in report.warnings]
-    lines.append(f"skills: {'installed ' + ', '.join(report.installed) if report.installed else 'already present'}")
+    lines.append("skills: " + ", ".join(report.installed))
     lines.append(f"runtime (_bmad): {report.setup_status}")
     if report.answers_added:
         lines.append("config answers added: " + ", ".join(report.answers_added))
-    if report.custom_written:
-        lines.append("team config deposited in _bmad/custom: " + ", ".join(report.custom_written))
-    if report.pin_written:
-        lines.append(f"version pinned in {PIN_FILE.as_posix()}")
+    if report.config_seeded:
+        lines.append(f"team config added to {CONFIG_DIR.as_posix()}: " + ", ".join(report.config_seeded))
+    if report.version_written:
+        lines.append(f"version recorded in {CONFIG_FILE.as_posix()}")
+    if report.custom_synced:
+        lines.append(f"copied to {CUSTOM_DIR.as_posix()}: " + ", ".join(report.custom_synced))
     if report.gitignore_added:
         lines.append(".gitignore: added " + ", ".join(report.gitignore_added))
     for key in ("problems", "retired_skills", "custom_not_renamed", "custom_unused", "unmet_requirements"):
@@ -399,20 +355,16 @@ def format_report(report: Report) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog=bin_name(), description="Prepare a working repo for a profile.")
+    parser = argparse.ArgumentParser(prog=bin_name(), description="Prepare a working repo for the harness.")
     commands = parser.add_subparsers(dest="command", required=True)
-    init = commands.add_parser("init", help="install a profile's skills and set up the BMad runtime in this repo")
-    init.add_argument("--profile", required=True, help="a folder name under profiles/")
-    init.add_argument("--agent", help="the coding tool to install skills for (default: the profile's)")
+    init = commands.add_parser(
+        "init", help="install the harness skills, set up the BMad runtime and sync the team config"
+    )
+    init.add_argument("--agent", default=DEFAULT_AGENT, help="the coding tool to install skills for")
     args = parser.parse_args(argv)
     try:
         check_prerequisites()
-        project = project_root()
-        profile = load_profile(args.profile)
-        agent = args.agent or profile.agent
-        if not agent:
-            raise InitError(f"no agent: pass --agent or set 'agent' in profiles/{profile.name}/profile.toml")
-        print(format_report(run_init(project, profile, agent, determine_version())))
+        print(format_report(run_init(project_root(), args.agent, determine_version())))
     except InitError as error:
         print(f"{bin_name()}: error: {error}", file=sys.stderr)
         return 1

@@ -7,14 +7,14 @@ const path = require("node:path");
 
 const probe = spawnSync("uv", ["--version"], { stdio: "ignore" });
 if (probe.error || probe.status !== 0) {
-  console.error("lke: uv is required and was not found. Install it: https://docs.astral.sh/uv/getting-started/installation/");
+  console.error("agf: uv is required and was not found. Install it: https://docs.astral.sh/uv/getting-started/installation/");
   process.exit(1);
 }
 
 const core = path.join(__dirname, "init.py");
 const run = spawnSync("uv", ["run", "--script", core, ...process.argv.slice(2)], { stdio: "inherit" });
 if (run.error) {
-  console.error(`lke: cannot run uv: ${run.error.message}`);
+  console.error(`agf: cannot run uv: ${run.error.message}`);
   process.exit(1);
 }
 process.exit(run.status ?? 1);

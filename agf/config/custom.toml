@@ -1,0 +1,2 @@
+# Team configuration of the Agentic Factory harness. Committed, so everyone inherits it.
+# init copies this file to _bmad/custom/config.toml and records the harness version below it.

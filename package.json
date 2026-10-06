@@ -1,15 +1,14 @@
 {
-  "name": "lke",
+  "name": "agf",
   "version": "0.0.0",
   "private": true,
-  "description": "Prepares a working repo for a profile (BA, PO, ...) from a Git ref, with no registry. Compatible with BMad Method; not an official BMad product.",
+  "description": "Prepares a working repo for the Agentic Factory harness from a Git ref, with no registry. Compatible with BMad Method; not an official BMad product.",
   "license": "MIT",
   "bin": {
-    "lke": "init/launch.js"
+    "agf": "agf/launch.js"
   },
   "files": [
-    "init",
-    "profiles",
+    "agf",
     "skills",
     "LICENSE",
     "TRADEMARK.md"
